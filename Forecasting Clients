@@ -1,0 +1,846 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# ### Plan for Project
+
+# * Step One:
+#     * Combine the Datasets together to have one dataset using the customerID column.
+# * Step Two:
+#     * Split the Dataset into Target, Valid and test datasets.
+# * Step three:
+#     * Make the all datapoints into numbers instead of letters 
+# * Step Four:
+#     * Train at least 3 different models and test them on test dataset, aiming for a 
+#         - AUC-ROC < 0.75 — 0 SP
+#         - 0.75 ≤ AUC-ROC < 0.81 — 4 SP
+#         - 0.81 ≤ AUC-ROC < 0.85 — 4.5 SP
+#         - 0.85 ≤ AUC-ROC < 0.87 — 5 SP
+#         - 0.87 ≤ AUC-ROC < 0.88 — 5.5 SP
+#         - AUC-ROC ≥ 0.88 — 6 SP
+
+# ### Forecasting Churn of Clients
+
+# Telecom operator Interconnect wants to forecast their churn of clients, and if it's discovered that a user is planning to leave, they will be offered promotional codes and special plan options. Clientele's personal data, including information about their plans and contracts are giving in order to find the best model to make this prediction.
+
+# ### Initialization
+
+# In[7]:
+
+
+import pandas as pd
+import numpy as np
+import re
+import matplotlib.pyplot as plt
+import seaborn as sns; sns.set_style("whitegrid")
+from scipy import stats as st
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import StandardScaler
+#
+from sklearn.utils import shuffle
+
+from sklearn.dummy import DummyClassifier 
+from sklearn.tree import DecisionTreeClassifier 
+from sklearn.linear_model import LogisticRegression  
+from sklearn.ensemble import RandomForestClassifier
+import catboost as cb
+from catboost import CatBoostClassifier, Pool, cv as catboost_cv 
+from lightgbm import LGBMClassifier 
+from xgboost import XGBClassifier
+
+
+from sklearn import metrics
+from sklearn.metrics import *
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score
+
+import sys
+import warnings
+if not sys.warnoptions:
+    warnings.simplefilter("ignore")
+
+
+# ### Load Data
+
+# In[8]:
+
+
+try:
+    df_contract = pd.read_csv('contract.csv')
+except:
+    df_contract = pd.read_csv('/datasets/final_provider/contract.csv')
+
+
+# In[9]:
+
+
+try:
+    df_personal = pd.read_csv('personal.csv')
+except:
+    df_personal = pd.read_csv('/datasets/final_provider/personal.csv')
+
+
+# In[10]:
+
+
+try:
+    df_internet = pd.read_csv('internet.csv')
+except:
+    df_internet = pd.read_csv('/datasets/final_provider/internet.csv')
+
+
+# In[11]:
+
+
+try:
+    df_phone = pd.read_csv('phone.csv')
+except:
+    df_phone = pd.read_csv('/datasets/final_provider/phone.csv')
+
+
+# After loading the data, define the function to get the general info of the dataset. Then print the generla information about each dataframe (contract, internet, phone, and personal). 
+
+# In[12]:
+
+
+def get_info(df):
+    # Print the general/summary information about the DataFrame
+    df.info()
+    # Print duplicated values for df
+    print('-'*50)
+    print("Duplicated values: ", df.duplicated().sum())
+    print('-'*50)
+    # Print missing values for df
+    print("Missing values: ")
+    print(df.isna().sum())
+    print('-'*50)
+    # Print a sample for df
+    display(df.head())
+
+
+# In[13]:
+
+
+get_info(df_contract)
+
+
+# In[14]:
+
+
+get_info(df_internet)
+
+
+# In[15]:
+
+
+get_info(df_personal)
+
+
+# In[16]:
+
+
+get_info(df_phone)
+
+
+# * df_contract dataset has 7043 records, 8 features,no missing and no duplicated values    
+# * df_internet dataset has 5517 records, 8 features,no missing and no duplicated values     
+# * df_personal dataset has 7043 records, 5 featuress, no missing and no duplicated values          
+# * df_phone dataset has 6361 records, 2 features, no missing and no duplicated values
+
+# Some changes do need to be made to the dataset such as turning `BeginDate` and  `EndDate` into datetime and `TotalCharges` needs to be changed to a float. First thing is to combine all of the data into one table, and rename some columns so it is easier to work with. Then check for any other problems with the dataset.
+
+# ### Combine Data using customerID
+
+# In[17]:
+
+
+data = (df_personal.merge(df_contract, how="left", on="customerID").merge(df_phone, how="left", on="customerID").merge(df_internet, how="left", on="customerID"))
+data.info()
+data.head()
+
+
+# ### Rename Columns
+
+# In[18]:
+
+
+columns = []
+for name in data.columns.values:
+    name = re.sub('([A-Z])', r' \1', name).lower().replace(' ', '_')[1:]
+    columns.append(name)
+data.columns = columns
+data.head(2)
+
+
+# In[19]:
+
+
+data = data.rename(columns = {'ustomer_i_d':'customer_id', 'ender':'gender', 'streaming_t_v':'streaming_tv'})
+data.head(2)
+
+
+# ### Check Data
+
+# * Check for missing values and decide how to address them: fill in the values or remove the records  
+# * Check for duplicated data     
+# * Check the data types and convert the data to the required types if necessary     
+# * Change features from 'Yes' to 1 and 'No' to 0, if useful     
+# * Enrich the data if needed by generating new features from the data   
+# * Find and eliminate errors in the data   
+
+# In[20]:
+
+
+data.duplicated().sum()
+
+
+# No duplicated data
+
+# In[21]:
+
+
+report = data.isna().sum().to_frame()
+report = report.rename(columns = {0: 'missing_values'})
+report['% of total'] = (report['missing_values'] / data.shape[0]).round(2)
+report.sort_values(by = 'missing_values', ascending = False).style.background_gradient('coolwarm')
+
+
+# Except `internet_service` all the other features with missing values have binary values (Yes/No) so ww'll replace them with 'No'.
+
+# ### Fix Data
+
+# In[22]:
+
+
+for col in ["online_security","online_backup","device_protection","tech_support","streaming_tv", "streaming_movies", "multiple_lines"]:
+    data[col] = data[col].fillna("No")
+
+
+# NaNs for internet_service values will be replaced with the 'not_available':
+
+# In[23]:
+
+
+data['internet_service'] = data['internet_service'].fillna('Not available')
+data['internet_service'].value_counts()
+
+
+# In[24]:
+
+
+data['internet_service'].value_counts()
+
+
+# In[25]:
+
+
+data.isna().sum()
+
+
+# Total number of current customers (not churn):
+
+# In[26]:
+
+
+data[data['end_date']== 'No']
+
+
+# Total number of new customers for which begin_date = extraction_date ('2020-02-01'):
+
+# In[27]:
+
+
+new_customers_df = data[data['begin_date']== '2020-02-01'] 
+new_customers_df
+
+
+# Even if there are only 11 new customers compared with 5174 total active customers, I prefer to remove these records being of no value for predicting whether a customer will leave the company.
+
+# In[28]:
+
+
+indexNames = data[data['begin_date']== '2020-02-01'].index
+data.drop(indexNames , inplace=True)
+data
+
+
+# Create a new column `churn` with 0 for 'No' in `end_date` and 1 for values in `end_date`:
+
+# In[29]:
+
+
+data['churn'] = [1 if x != 'No' else 0 for x in data['end_date']]
+
+
+# In[30]:
+
+
+data.head()
+
+
+# Create a new column with `days_in_service`, calculated by substracting `begin_date` from `end_date`:
+
+# first need to replace 'No' with the date when data was extracted, 02/01/2020
+
+# In[31]:
+
+
+data.loc[data['end_date'] == 'No', 'end_date'] = '2020-02-01 00:00:00'
+
+
+# change data types to datetime
+
+# In[32]:
+
+
+data['begin_date'] = pd.to_datetime(data['begin_date'], format='%Y-%m-%d')
+data['end_date'] = pd.to_datetime(data['end_date'], format='%Y-%m-%d %H:%M:%S')
+
+
+# days in service, calculated by substracting begin_date from end_date
+
+# In[33]:
+
+
+data['days_in_service'] = (data['end_date'] - data['begin_date']).dt.days
+
+
+# Since we extracted the information we needed, we'll delete the begining/end dates so will not be any data leakage for modeling.
+# 
+# We also don't need the `customer_id` since we already joined all the tables.
+
+# In[34]:
+
+
+data.drop(['begin_date', 'end_date', 'customer_id'], axis=1, inplace=True)
+
+
+# In[35]:
+
+
+data.info()
+
+
+# Change the `total_charges` column from an object to a float:
+
+# In[36]:
+
+
+data['total_charges'] = data['total_charges'].astype('float')
+
+
+# In[37]:
+
+
+data.info()
+data.head()
+
+
+# ### Exploratory Data Analysis 
+
+# * Analyze both the features and the target:   
+# * calculate the mean, variance, and standard deviation 
+# * plot histograms
+# * describe the distributions        
+
+# In[38]:
+
+
+data.describe(include = 'all')
+
+
+# Categorical features vs. churn:
+
+# In[39]:
+
+
+fig, axs = plt.subplots(3, len(data.columns) // 5, figsize=(20,20))
+axs = axs.flatten()
+cols=list(set(data.columns) - set(['customerID','days_in_service', 'monthly_charges','total_charges' ]))
+for col, ax in zip(cols, axs):
+    df = data.groupby([col, 'churn'])['churn'].count().unstack()
+    df.plot(kind='bar', stacked=False, label='#churn (neg, pos)', ax=ax)
+    plt.setp(ax.get_xticklabels(), rotation=45)
+plt.show()  
+
+
+# Majority of customers who left:
+#     * Used mostly electronic checks
+#     * Were predominant month-to-month payers
+#     * Were not using online security or tech support
+#     * Were moslty young, w/o dependents or partner
+# 
+# `churn` is an imbalance of classes. We will need to correct this when will train our models.
+
+# Distribution plot of numerical variables:
+
+# In[40]:
+
+
+sns.displot(data=data, col='churn', x= 'monthly_charges', hue= 'churn', kde=True, palette='Set1')
+sns.displot(data=data, col='churn', x= 'total_charges', hue= 'churn', kde=True)
+sns.displot(data=data, col='churn', x= 'days_in_service', hue= 'churn', kde=True, palette='Accent')
+
+
+# Majority of customers who left:
+# 
+#     * were clients for 1-3 months
+#     * paid an average of $80 per month
+#     * paid less charges in total since they typically didn't stay long
+
+# Correlation Matrix:
+
+# In[41]:
+
+
+plt.figure(figsize=(12, 8))
+corrMatrix = data.corr()
+#sns.heatmap(corrMatrix, annot=True, cmap='coolwarm')
+sns.heatmap(corrMatrix, annot=True)
+plt.title('Correlation Matrix')
+plt.show()
+
+
+# A notably strong correlation with churn exists the total charges paid (0.65) and for the number of days in service (-0.35).
+
+# In[42]:
+
+
+sns.countplot(data["churn"])
+plt.show()
+
+
+# Our Target Varisable is imbalnaced (3 to 1 ratio) so in order to try to fix this, we will do upsampling and weight correlation.
+
+# ### Splitting Dataset into Train and Test Sets.
+
+# In[43]:
+
+
+y = data.churn
+X = data.drop(['churn'], axis=1)
+# spliting of the dataset into train 75% and test 25 % sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.25, random_state=12345)
+
+print(X_train.shape)
+print(y_train.shape)
+print(X_test.shape)
+print(y_test.shape)
+
+
+# In[44]:
+
+
+features_train = X_train.copy()
+features_test = X_test.copy()
+
+# select numerical columns
+numerical_features = ['monthly_charges', 'total_charges', 'days_in_service']
+
+# list of categorical variables
+s = (features_train.dtypes == 'object')
+categorical_features = list(s[s].index)
+print('Categorical features')
+print(categorical_features)
+print('Numerical features')
+print(numerical_features)
+
+
+# #### Scaling without encoding:
+
+# In[45]:
+
+
+X_train_noe = features_train.copy()
+X_test_noe = features_test.copy()
+# scaling numerical features
+scaler = StandardScaler()
+scaler.fit(X_train_noe[numerical_features]) 
+
+X_train_noe[numerical_features] = scaler.transform(X_train_noe[numerical_features])
+X_test_noe[numerical_features] = scaler.transform(X_test_noe[numerical_features])
+X_train_noe.head(2)
+
+
+# #### Ordinal Encoding Categorical Features:
+
+# In[46]:
+
+
+data_oe = data.copy()
+y_oe = data_oe['churn']
+X_oe = data_oe.drop('churn', axis=1)
+
+# spliting of the dataset into train 75% and test 25 % sets
+X_train_oe, X_test_oe, y_train_oe, y_test_oe = train_test_split(X_oe, y_oe, test_size=0.25, random_state=12345)
+
+numerical_oe = ['monthly_charges', 'total_charges', 'days_in_service']
+
+
+# In[47]:
+
+
+encoder = OrdinalEncoder()
+X_train_oe[categorical_features] = encoder.fit_transform(X_train_oe[categorical_features])
+X_test_oe[categorical_features] = encoder.transform(X_test_oe[categorical_features])
+X_train_oe.head(2)
+
+
+# ##### Scaling numerical features:
+
+# In[48]:
+
+
+scaler = StandardScaler()
+scaler.fit(X_train_oe[numerical_features]) 
+
+X_train_oe[numerical_features] = scaler.transform(X_train_oe[numerical_features])
+X_test_oe[numerical_features] = scaler.transform(X_test_oe[numerical_features])
+X_train_oe.head(2)
+
+
+# #### One Hot Encoding:
+
+# In[49]:
+
+
+data_ohe=pd.get_dummies(data, drop_first=True)
+data_ohe.head(2)
+
+
+# In[50]:
+
+
+y_ohe = data_ohe['churn']
+X_ohe = data_ohe.drop('churn', axis=1)
+
+
+# In[51]:
+
+
+X_train_ohe, X_test_ohe, y_train_ohe, y_test_ohe = train_test_split(X_ohe, y_ohe, test_size=0.25, random_state=12345)
+
+numerical_ohe = ['monthly_charges', 'total_charges', 'days_in_service']
+
+
+# ##### Scaling Numerical Features:
+
+# In[52]:
+
+
+scaler = StandardScaler()
+scaler.fit(X_train_ohe[numerical_ohe])
+
+X_train_ohe[numerical_ohe] = scaler.transform(X_train_ohe[numerical_ohe])
+X_test_ohe[numerical_ohe]  = scaler.transform(X_test_ohe[numerical_ohe])
+X_train_ohe.head(2)
+
+
+# Our categorical features have very few unique values (most are binary), so there's not much need to make different encodings, It is only needed if we had features with more unique values.
+
+# #### Upsmapling
+
+# In[57]:
+
+
+def upsample(features, target, repeat):   
+    features_zeros = features[target == 0]
+    features_ones = features[target == 1]
+    target_zeros = target[target == 0]
+    target_ones = target[target == 1]
+    
+    features_upsampled = pd.concat([features_zeros] + [features_ones] * repeat)
+    target_upsampled = pd.concat([target_zeros] + [target_ones] * repeat)
+    
+    features_upsampled, target_upsampled = shuffle(
+        features_upsampled, target_upsampled, random_state=12345)
+    
+    return features_upsampled, target_upsampled
+
+# upsampling w/o encoding, for one-hot and ordinal encoder
+X_train_ups, y_train_ups = upsample(X_train, y_train, 3)
+X_train_ohe_ups, y_train_ohe_ups = upsample(X_train_ohe, y_train_ohe, 3)
+X_train_oe_ups, y_train_oe_ups = upsample(X_train_oe, y_train_oe, 3)
+
+
+# ### Making the Models
+
+# The models that we are considering are: DummyClassifier (as baseline model), Logistic regression (sanity check), Random Forest, LightGBM, CatBoost and XGBoost Classifiers.
+# 
+# Evaluation Procedure:
+# Define the metrics (AUC-ROC & accuracy) to predict customer churn (adapted from ML Projects)
+
+# In[58]:
+
+
+def evaluate_model(model, train_features, train_target, test_features, test_target):
+    
+    eval_stats = {}
+    
+    fig, ax = plt.subplots(figsize=(10, 6)) 
+    
+    for type, features, target in (('train', train_features, train_target), ('test', test_features, test_target)):
+        
+        eval_stats[type] = {}
+    
+        pred_target = model.predict(features)
+        pred_proba = model.predict_proba(features)[:, 1]
+        
+        
+        # ROC
+        fpr, tpr, roc_thresholds = metrics.roc_curve(target, pred_proba)
+        roc_auc = metrics.roc_auc_score(target, pred_proba)    
+        eval_stats[type]['ROC AUC'] = roc_auc
+
+        
+        if type == 'train':
+            color = 'blue'
+        else:
+            color = 'green'
+
+        # ROC
+        ax.plot(fpr, tpr, color=color, label=f'{type}, ROC AUC={roc_auc:.2f}')
+        # setting crosses for some thresholds
+        for threshold in (0.2, 0.4, 0.5, 0.6, 0.8):
+            closest_value_idx = np.argmin(np.abs(roc_thresholds-threshold))
+            marker_color = 'orange' if threshold != 0.5 else 'red'            
+            ax.plot(fpr[closest_value_idx], tpr[closest_value_idx], color=marker_color, marker='X', markersize=7)
+        ax.plot([0, 1], [0, 1], color='grey', linestyle='--')
+        ax.set_xlim([-0.02, 1.02])    
+        ax.set_ylim([-0.02, 1.02])
+        ax.set_xlabel('FPR')
+        ax.set_ylabel('TPR')
+        ax.legend(loc='lower center')        
+        ax.set_title(f'ROC Curve')
+        
+        
+        eval_stats[type]['Accuracy'] = metrics.accuracy_score(target, pred_target)
+    
+    df_eval_stats = pd.DataFrame(eval_stats)
+    df_eval_stats = df_eval_stats.round(2)
+    df_eval_stats = df_eval_stats.reindex(index=('Accuracy', 'ROC AUC'))
+    
+    print(df_eval_stats)
+    return
+
+
+# ### Model 0- Constant
+
+# In[59]:
+
+
+base_model = DummyClassifier(strategy="constant", random_state=12345, constant=1).fit(                                            X_train, y_train)
+
+evaluate_model(base_model, X_train, y_train, X_test, y_test)
+
+
+# This is a constant variable of 0.5 for the models.
+
+# ### Logistic Regression
+
+# For our first model, Logistic Regression we'll use it as sanity check and we'll apply one-hot encoding for categorical featuresand upsampling for the imbalance target
+
+# In[60]:
+
+
+lr = LogisticRegression(random_state=12345, solver='liblinear')
+lr.fit(X_train_ohe_ups, y_train_ohe_ups)     
+
+evaluate_model(lr, X_train_ohe_ups, y_train_ohe_ups, X_test_ohe, y_test_ohe)
+
+
+# ### Random Forest
+
+# For tree based model - Random Forest - we'll use ordinal encoding.
+
+# Random Forest Classifier + Class weight correction:
+
+# In[61]:
+
+
+rfc_class_weight = RandomForestClassifier(random_state=12345, class_weight='balanced')
+rfc_class_weight.fit(X_train_oe, y_train_oe)    
+
+evaluate_model(rfc_class_weight, X_train_oe, y_train_oe, X_test_oe, y_test_oe)
+
+
+# Random Forest Classifier + Upsampling:
+
+# In[62]:
+
+
+rfc_upsample = RandomForestClassifier(random_state=12345)
+rfc_upsample.fit(X_train_oe_ups, y_train_oe_ups)    
+
+evaluate_model(rfc_upsample, X_train_oe_ups, y_train_oe_ups, X_test_oe, y_test_oe)
+
+
+# Random Forest Classifier + Hyperparameters tunning:
+
+# Using class weights correction since we got better results than upsampling
+
+# In[63]:
+
+
+get_ipython().run_cell_magic('time', '', 'params = {"n_estimators" : [300, 500],\n 
+                             "max_depth" : [10,40, 60]}\n\nrfc = RandomForestClassifier(random_state = 12345, class_weight=\'balanced\')\n\ngrid_rfc = GridSearchCV(estimator=rfc, param_grid=params, n_jobs=-1, verbose=0, scoring=\'roc_auc\', cv=5)\ngrid_rfc.fit(X_train_oe, y_train_oe)\n\nprint(\'The best hyperparameters are: \', grid_rfc.best_params_)')
+
+
+# In[64]:
+
+
+get_ipython().run_cell_magic('time', '', 'rfc_ht = RandomForestClassifier(**grid_rfc.best_params_)\nrfc_ht.fit(X_train_oe, y_train_oe)\n\nevaluate_model(rfc_ht, X_train_oe, y_train_oe, X_test_oe, y_test_oe)')
+
+
+# ### LGBMClassifier:
+
+# For LGBMClassifier we'll apply ordinal encoding and class weights for imbalanced target
+
+# In[65]:
+
+
+get_ipython().run_cell_magic('time', '', "lgbc = LGBMClassifier(random_state=12345, class_weight='balanced')\nlgbc.fit(X_train_oe, y_train_oe)\n\nevaluate_model(lgbc, X_train_oe, y_train_oe, X_test_oe, y_test_oe)")
+
+
+# Cross-validating LGBM + Class weights correction:
+
+# In[66]:
+
+
+get_ipython().run_cell_magic('time', '', "# define hyperparameters to tune\nparams_ = {'learning_rate': [0.1, 0.5, 0.7],\n'max_depth': [8,10]\n}\nlgb = LGBMClassifier(random_state=12345, class_weight='balanced')\ngrid_lgb = GridSearchCV(estimator=lgb, param_grid=params_, n_jobs=-1, verbose=0, scoring='roc_auc', cv=5)\ngrid_lgb.fit(X_train_oe, y_train_oe)\n\nprint('The best hyperparameters are: ', grid_lgb.best_params_)  ")
+
+
+# In[67]:
+
+
+get_ipython().run_cell_magic('time', '', 'lgb_gs = LGBMClassifier(**grid_lgb.best_params_)\nlgb_gs.fit(X_train_oe, y_train_oe)\n\nevaluate_model(lgb_gs, X_train_oe, y_train_oe, X_test_oe, y_test_oe)')
+
+
+# ### CatBoost Classification Model:
+
+# CatBoost have its own ecoding implementation, therefore will be using the data w/o any encoding/standardization.
+
+# Cross-vaidating Catboost + Upsampling:
+
+# In[68]:
+
+
+get_ipython().run_cell_magic('time', '', 'grid_cb = {\'learning_rate\': [0.001, 0.01, 0.5],\n\'depth\': [4, 6],\n\'l2_leaf_reg\': [1, 3, 5]\n       }\ncb_clf = CatBoostClassifier(\n    iterations=50,\n    cat_features = categorical_features,\n    logging_level = \'Silent\',\n    eval_metric=\'AUC\',\n    early_stopping_rounds = 50,\n    random_state = 12345)\ngrid_search_cb = GridSearchCV(estimator = cb_clf, param_grid = grid_cb, scoring="roc_auc", cv=5)\ncb_cv = grid_search_cb.fit(X_train_ups, y_train_ups)\nprint(\'The best hyperparameters are: {}\'.format(cb_cv.best_params_))')
+
+
+# In[69]:
+
+
+get_ipython().run_cell_magic('time', '', 'cb_gs = CatBoostClassifier(**grid_search_cb.best_params_)\ncb_gs.fit(X_train_ups, y_train_ups, cat_features = categorical_features, eval_set=(X_test, y_test),\\\nverbose=False, plot=False)\n   \nevaluate_model(cb_gs, X_train_ups, y_train_ups, X_test, y_test)')
+
+
+# Cross-vaidating Catboost + Class weights correction for imbalanced target:
+
+# In[70]:
+
+
+get_ipython().run_cell_magic('time', '', 'grid_cb = {\'learning_rate\': [0.001, 0.01, 0.5],\n\'depth\': [4, 6],\n\'l2_leaf_reg\': [1, 3, 5]\n}\ncb_clf = CatBoostClassifier(\n iterations=50,\ncat_features = categorical_features,\n logging_level = \'Silent\',\n eval_metric=\'AUC\',\n    class_weights = (3,1),\n    random_state = 12345)\ngrid_search_cb = GridSearchCV(estimator = cb_clf, param_grid = grid_cb, scoring="roc_auc", cv=5)\ncb_cv = grid_search_cb.fit(X_train, y_train)\nprint(\'The best hyperparameters are: {}\'.format(cb_cv.best_params_))')
+
+
+# In[71]:
+
+
+get_ipython().run_cell_magic('time', '', 'cb_gs = CatBoostClassifier(**grid_search_cb.best_params_)\ncb_gs.fit(X_train, y_train, cat_features = categorical_features, eval_set=(X_test, y_test),\\\n          verbose=False, plot=False)\n   \nevaluate_model(cb_gs, X_train, y_train, X_test, y_test)')
+
+
+# ### XGBoost Classifier:
+
+# Will use the data encoded with One-Hot Encoder and upsampling technique for the imbalanced target
+
+# In[72]:
+
+
+xgb = XGBClassifier(random_state=12345)    
+xgb.fit(X_train_ohe_ups, y_train_ohe_ups)    
+
+evaluate_model(xgb, X_train_ohe_ups, y_train_ohe_ups, X_test_ohe, y_test_ohe)
+
+
+# XGBoost + Hyperparameters tunning:
+
+# In[73]:
+
+
+get_ipython().run_cell_magic('time', '', "# define hyperparameters to tune\nparams_ = {'max_depth': [4, 8, 10, 15],\n           'learning_rate':[0.01, 0.1, 0.5]\n          }\n# define the grid search\ngrid_xgb = GridSearchCV(xgb, param_grid=params_, scoring='roc_auc', cv=5,verbose=False)\ngrid_xgb.fit(X_train_ohe_ups, y_train_ohe_ups)\n\nprint('The best hyperparameters are: ', grid_xgb.best_params_)")
+
+
+# In[74]:
+
+
+get_ipython().run_cell_magic('time', '', 'xgb_gs = XGBClassifier(**grid_xgb.best_params_)\nxgb_gs.fit(X_train_ohe_ups, y_train_ohe_ups)    \n\nevaluate_model(xgb_gs, X_train_ohe_ups, y_train_ohe_ups, X_test_ohe, y_test_ohe)')
+
+
+# ### Conclusions
+
+# Step One:
+# Combine the Datasets together to have one dataset using the customerID column.
+# Step Two:
+# Split the Dataset into Target, Valid and test datasets.
+# Step three:
+# Make the all datapoints into numbers instead of letters
+# Step Four:
+# Train at least 3 different models and test them on test dataset, aiming for a
+# AUC-ROC < 0.75 — 0 SP
+# 0.75 ≤ AUC-ROC < 0.81 — 4 SP
+# 0.81 ≤ AUC-ROC < 0.85 — 4.5 SP
+# 0.85 ≤ AUC-ROC < 0.87 — 5 SP
+# 0.87 ≤ AUC-ROC < 0.88 — 5.5 SP
+# AUC-ROC ≥ 0.88 — 6 SP
+
+# Steps Planned:
+# 
+# When doing the project I followed all of my steps that I had planned plus extra. Instead of just combinging the tables together first, I went ahead and evaluated each table individually. 
+# 
+# I then combined the tables, deleting some columns, replacing NAN values and renaming columns. 
+# 
+# I also made the target value, the enddate into 1 and 0 and creating a new column called churn. I then split the dataset into just test and train, and used two different methods on making all the datapoints numerical such as OHE and Ordinal Encoding.  
+# 
+# The last step I did was train different models and use the test set to evaluate each one and make sure the AUC-ROC is above 0.75. 
+
+# Difficulties:
+# 
+# A difficulty I had was calculatingt he correct AUC-ROC. I was using binarypredictions instead. I fixed it by using predic-proba. I also had trouble at first reaching a high AUC-ROC score, but after I tried the catboost, it became a larger AUC-ROC score. 
+
+# Key Steps:
+# 
+# Some of the key steps to solving this task was making a churn column with enddate being 1 and 0. Another key step was upsampling the dataset since the target variable was imbalanced. I would say that this is the most important because without a balanced target, the results will not come out high or accurate. 
+
+# Results
+# 
+# * Dummy classifier:                                           AUC-ROC:  0.50  Accuracy: 0.26 
+# * Logistic Regression + Upsampling:                           AUC-ROC:  0.85  Accuracy: 0.74
+# * Random Forest + Class weight correction:                    AUC-ROC:  0.86  Accuracy: 0.82 
+# * Random Forest + Upsampling:                                 AUC-ROC:  0.85  Accuracy: 0.81 
+# * Cross-validating RF + + Class weight correction:            AUC-ROC:  0.87  Accuracy: 0.84 
+# * LGBM + Class weight correction:                             AUC-ROC:  0.90  Accuracy: 0.83 
+# * Cross-validating LGBM + Class weight correction:            AUC-ROC:  0.90  Accuracy: 0.86 
+# * Cross-validayting Catboost + Upsampling:                    AUC-ROC:  0.90  Accuracy: 0.85 
+# * Cross-validayting Catboost + Class weight correction:       AUC-ROC:  0.93  Accuracy: 0.88 
+# * XGBoost + Upsampling:                                       AUC-ROC:  0.91  Accuracy: 0.85 
+# * Cross-validayting XGBoost + Upsampling:                     AUC-ROC:  0.89  Accuracy: 0.85
+
+# Final Model:
+
+# CatBoost Classifier using class weights correction for the imbalanced target gave the best results, so we will be choosing this model as our final classifier.
+
+# In[75]:
+
+
+result = evaluate_model(cb_gs, X_train, y_train, X_test, y_test)
+
+
+# In[ ]:
+
+
+
+
